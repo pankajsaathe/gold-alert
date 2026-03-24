@@ -36,19 +36,33 @@ twilio_client = Client(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN)
 def get_gold_price() -> float | None:
     """
     Fetches the current gold spot price (USD per troy ounce).
-    Uses the free metals.live API — no API key required.
-    Returns None on any network / parse error.
+    Uses gold-api.com — completely free, no API key, no rate limits.
+    Falls back to a second source if the first fails.
+    Returns None only if both sources fail.
     """
-    try:
-        url = "https://api.metals.live/v1/spot/gold"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()          # e.g. [{"gold": 2345.67}]
-        price = float(data[0]["gold"])
-        return price
-    except Exception as exc:
-        log.warning(f"Could not fetch gold price: {exc}")
-        return None
+    sources = [
+        {
+            "url": "https://api.gold-api.com/price/XAU",
+            "parse": lambda d: float(d["price"]),
+            "name": "gold-api.com"
+        },
+        {
+            "url": "https://api.metalpriceapi.com/v1/latest?api_key=demo&base=XAU&currencies=USD",
+            "parse": lambda d: round(1.0 / float(d["rates"]["USD"]), 2),
+            "name": "metalpriceapi.com (fallback)"
+        },
+    ]
+    for source in sources:
+        try:
+            resp = requests.get(source["url"], timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            price = source["parse"](data)
+            log.debug(f"Price fetched from {source['name']}")
+            return price
+        except Exception as exc:
+            log.warning(f"Could not fetch from {source['name']}: {exc}")
+    return None
 
 
 # ── Send WhatsApp alert ───────────────────────────────────
